@@ -35,6 +35,7 @@ class Settings:
     qbit_password: str | None
     category_map: dict[str, str]
     idle_seconds: int
+    active_within_seconds: int
     active_check_interval: int
     scan_interval: int
     dry_run: bool
@@ -79,6 +80,7 @@ class Settings:
             qbit_password=os.getenv("QBIT_PASSWORD") or None,
             category_map=category_map,
             idle_seconds=int(os.getenv("IDLE_SECONDS", "600")),
+            active_within_seconds=int(os.getenv("ACTIVE_WITHIN_SECONDS", "600")),
             active_check_interval=int(os.getenv("ACTIVE_CHECK_INTERVAL", "2")),
             scan_interval=int(os.getenv("SCAN_INTERVAL", "30")),
             dry_run=env_bool("DRY_RUN", False),
@@ -128,7 +130,10 @@ class JellyfinClient:
         self.http = http
 
     def active_user_sessions(self) -> list[dict[str, Any]]:
-        url = f"{self.settings.jellyfin_url}/Sessions"
+        query = urllib.parse.urlencode(
+            {"activeWithinSeconds": str(self.settings.active_within_seconds)}
+        )
+        url = f"{self.settings.jellyfin_url}/Sessions?{query}"
         status, body, _ = self.http.request(
             "GET",
             url,
@@ -141,7 +146,7 @@ class JellyfinClient:
         active = []
         for session in sessions:
             # Treat any authenticated user session as activity, not only playback.
-            if session.get("UserId") or session.get("UserName"):
+            if session.get("IsActive", True) and (session.get("UserId") or session.get("UserName")):
                 active.append(session)
         return active
 

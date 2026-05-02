@@ -28,7 +28,8 @@ Do not mount `/local-downloads` into Radarr/Sonarr. They should import only afte
 ## Behavior
 
 - Treats any authenticated Jellyfin session as activity, not only playback.
-- Requires Jellyfin to be idle for `IDLE_SECONDS` before moving.
+- Checks Jellyfin sessions with `activeWithinSeconds`.
+- Requires Jellyfin to be idle for `IDLE_SECONDS` after no recent sessions are returned.
 - Checks Jellyfin every `ACTIVE_CHECK_INTERVAL` seconds while moving.
 - Stops `rsync` if a Jellyfin user appears.
 - Pauses qBittorrent while Jellyfin is active and while moving.
@@ -78,6 +79,7 @@ Optional:
 QBIT_USERNAME
 QBIT_PASSWORD
 IDLE_SECONDS=600
+ACTIVE_WITHIN_SECONDS=600
 ACTIVE_CHECK_INTERVAL=2
 SCAN_INTERVAL=30
 DRY_RUN=false
@@ -118,4 +120,3 @@ After the mover finishes a torrent, qBittorrent will be updated to the final des
 ## Safety
 
 Run with `DRY_RUN=true` until logs show exactly the torrents you expect. The mover skips files that already appear to be under their final destination.
-
