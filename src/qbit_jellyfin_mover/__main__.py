@@ -198,11 +198,17 @@ class QBittorrentClient:
 
     def pause_all(self) -> None:
         LOG.info("Pausing all qBittorrent torrents")
-        self.api_post("/api/v2/torrents/pause", {"hashes": "all"})
+        try:
+            self.api_post("/api/v2/torrents/stop", {"hashes": "all"})
+        except RuntimeError:
+            self.api_post("/api/v2/torrents/pause", {"hashes": "all"})
 
     def resume_all(self) -> None:
         LOG.info("Resuming all qBittorrent torrents")
-        self.api_post("/api/v2/torrents/resume", {"hashes": "all"})
+        try:
+            self.api_post("/api/v2/torrents/start", {"hashes": "all"})
+        except RuntimeError:
+            self.api_post("/api/v2/torrents/resume", {"hashes": "all"})
 
     def set_location(self, torrent_hash: str, location: str) -> None:
         LOG.info("Updating qBittorrent location for %s to %s", torrent_hash, location)
@@ -395,4 +401,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
