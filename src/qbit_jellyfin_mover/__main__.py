@@ -313,6 +313,7 @@ class Mover:
 
         if self.settings.dry_run:
             LOG.info("Dry run: not moving %s", name)
+            self._sleep(self.settings.scan_interval)
             return
 
         if not source.exists():
