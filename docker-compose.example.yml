@@ -1,0 +1,30 @@
+services:
+  qbit-jellyfin-mover:
+    image: ghcr.io/OWNER/qbit-jellyfin-mover:latest
+    container_name: qbit-jellyfin-mover
+    restart: unless-stopped
+    environment:
+      JELLYFIN_URL: http://192.168.0.21:8096
+      JELLYFIN_API_KEY: replace-me
+      QBIT_URL: http://192.168.0.20:8085
+      # QBIT_USERNAME and QBIT_PASSWORD are optional if local auth bypass is enabled.
+      QBIT_USERNAME: ""
+      QBIT_PASSWORD: ""
+      IDLE_SECONDS: "600"
+      ACTIVE_CHECK_INTERVAL: "2"
+      SCAN_INTERVAL: "30"
+      DRY_RUN: "true"
+      PAUSE_QBIT_WHEN_JELLYFIN_ACTIVE: "true"
+      PAUSE_QBIT_DURING_MOVE: "true"
+      CATEGORY_MAP: >-
+        {
+          "radarr": "/data/downloads/movies",
+          "sonarr": "/data/downloads/shows",
+          "autobrr": "/data/downloads/autobrr",
+          "sportarr": "/data/downloads/sportarr"
+        }
+    volumes:
+      # Mount the same paths qBittorrent sees.
+      - /mnt/ExternalHDD:/data
+      - /path/to/local-downloads:/local-downloads
+
