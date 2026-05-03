@@ -245,6 +245,26 @@ class QBittorrentClient:
         except RuntimeError:
             self.api_post("/api/v2/torrents/resume", {"hashes": "all"})
 
+    def pause_hashes(self, hashes: list[str]) -> None:
+        if not hashes:
+            return
+        LOG.info("Pausing %s managed qBittorrent torrents", len(hashes))
+        joined = "|".join(hashes)
+        try:
+            self.api_post("/api/v2/torrents/stop", {"hashes": joined})
+        except RuntimeError:
+            self.api_post("/api/v2/torrents/pause", {"hashes": joined})
+
+    def resume_hashes(self, hashes: list[str]) -> None:
+        if not hashes:
+            return
+        LOG.info("Resuming %s managed qBittorrent torrents", len(hashes))
+        joined = "|".join(hashes)
+        try:
+            self.api_post("/api/v2/torrents/start", {"hashes": joined})
+        except RuntimeError:
+            self.api_post("/api/v2/torrents/resume", {"hashes": joined})
+
     def set_location(self, torrent_hash: str, location: str) -> None:
         LOG.info("Updating qBittorrent location for %s to %s", torrent_hash, location)
         self.api_post("/api/v2/torrents/setLocation", {"hashes": torrent_hash, "location": location})
@@ -258,6 +278,7 @@ class Mover:
         self.qbit = QBittorrentClient(settings, self.http)
         self.stop_requested = False
         self.qbit_paused_by_us = False
+        self.qbit_paused_hashes: list[str] = []
         self.pending_location_updates: list[dict[str, str]] = []
         self.skipped_hashes: set[str] = set()
 
@@ -313,14 +334,28 @@ class Mover:
     def _pause_if_needed(self) -> None:
         if self.settings.dry_run or self.qbit_paused_by_us:
             return
-        self.qbit.pause_all()
+        hashes = self._managed_torrent_hashes()
+        if not hashes:
+            LOG.info("No managed qBittorrent torrents to pause")
+            return
+        self.qbit.pause_hashes(hashes)
+        self.qbit_paused_hashes = hashes
         self.qbit_paused_by_us = True
 
     def _resume_if_paused(self) -> None:
         if self.settings.dry_run or not self.qbit_paused_by_us:
             return
-        self.qbit.resume_all()
+        self.qbit.resume_hashes(self.qbit_paused_hashes)
+        self.qbit_paused_hashes = []
         self.qbit_paused_by_us = False
+
+    def _managed_torrent_hashes(self) -> list[str]:
+        managed_categories = set(self.settings.category_map)
+        hashes = []
+        for torrent in self.qbit.torrents():
+            if (torrent.get("category") or "") in managed_categories and torrent.get("hash"):
+                hashes.append(torrent["hash"])
+        return hashes
 
     def _next_candidate(self) -> dict[str, Any] | None:
         for torrent in self.qbit.torrents():
