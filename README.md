@@ -2,7 +2,9 @@
 
 Dockerized controller for moving completed qBittorrent downloads from local SSD/ZFS storage to an external media/download disk without interrupting Jellyfin users.
 
-It waits until Jellyfin has no authenticated sessions for a grace period, pauses qBittorrent, moves one completed torrent, and updates qBittorrent's torrent location with `setLocation` so Radarr/Sonarr keep seeing the expected final path.
+It waits until Jellyfin has no authenticated sessions for a grace period, pauses qBittorrent, and moves one completed torrent outside qBittorrent with `rsync`.
+
+By default it only calls qBittorrent `setLocation` in `safe` mode: after the external copy has completed, the source has been removed, the destination exists, and qBittorrent's API is responding quickly. This avoids using qBittorrent's own large file move engine, which can make qBittorrent's WebUI/API unavailable and break Radarr/Sonarr communication.
 
 ## Intended Flow
 
@@ -33,7 +35,9 @@ Do not mount `/local-downloads` into Radarr/Sonarr. They should import only afte
 - Checks Jellyfin every `ACTIVE_CHECK_INTERVAL` seconds while moving.
 - Stops `rsync` if a Jellyfin user appears.
 - Pauses qBittorrent while Jellyfin is active and while moving.
-- Calls qBittorrent `setLocation` after a successful move.
+- Health-checks qBittorrent before starting a move.
+- Copies/removes files outside qBittorrent with `rsync`.
+- Optionally updates qBittorrent location after a successful move, depending on `QBIT_LOCATION_UPDATE_MODE`.
 
 ## Jellyfin API Key
 
@@ -85,7 +89,19 @@ SCAN_INTERVAL=30
 DRY_RUN=false
 PAUSE_QBIT_WHEN_JELLYFIN_ACTIVE=true
 PAUSE_QBIT_DURING_MOVE=true
+QBIT_HEALTH_REQUIRED=true
+QBIT_API_TIMEOUT=8
+QBIT_HEALTH_TIMEOUT=3
+QBIT_LOCATION_UPDATE_MODE=safe
 LOG_LEVEL=INFO
+```
+
+`QBIT_LOCATION_UPDATE_MODE` controls whether the mover calls qBittorrent `setLocation`:
+
+```text
+safe   Only update after rsync has completed, source is gone, destination exists, and qBittorrent is healthy.
+never  Never update qBittorrent location. This avoids qBittorrent move work, but torrents may show missing files after the source is removed.
+always Previous behavior: call setLocation after a successful rsync.
 ```
 
 `CATEGORY_MAP` must be JSON:
@@ -115,7 +131,7 @@ Set incomplete downloads to:
 /local-downloads/incomplete
 ```
 
-After the mover finishes a torrent, qBittorrent will be updated to the final destination base path, such as `/data/downloads/movies`.
+After the mover finishes a torrent, qBittorrent can be updated to the final destination base path, such as `/data/downloads/movies`. Keep `QBIT_LOCATION_UPDATE_MODE=safe` unless you deliberately want to skip qBittorrent metadata updates.
 
 ## Safety
 

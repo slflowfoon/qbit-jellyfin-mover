@@ -16,6 +16,10 @@ services:
       DRY_RUN: "true"
       PAUSE_QBIT_WHEN_JELLYFIN_ACTIVE: "true"
       PAUSE_QBIT_DURING_MOVE: "true"
+      QBIT_HEALTH_REQUIRED: "true"
+      QBIT_API_TIMEOUT: "8"
+      QBIT_HEALTH_TIMEOUT: "3"
+      QBIT_LOCATION_UPDATE_MODE: "safe"
       CATEGORY_MAP: >-
         {
           "radarr": "/data/downloads/movies",
@@ -27,4 +31,3 @@ services:
       # Mount the same paths qBittorrent sees.
       - /mnt/ExternalHDD:/data
       - /path/to/local-downloads:/local-downloads
-

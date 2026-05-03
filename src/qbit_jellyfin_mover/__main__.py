@@ -41,6 +41,10 @@ class Settings:
     dry_run: bool
     pause_qbit_when_jellyfin_active: bool
     pause_qbit_during_move: bool
+    qbit_api_timeout: int
+    qbit_health_timeout: int
+    qbit_location_update_mode: str
+    qbit_health_required: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -72,6 +76,10 @@ class Settings:
         if not jellyfin_api_key:
             raise SystemExit("JELLYFIN_API_KEY is required")
 
+        qbit_location_update_mode = os.getenv("QBIT_LOCATION_UPDATE_MODE", "safe").lower()
+        if qbit_location_update_mode not in {"never", "safe", "always"}:
+            raise SystemExit("QBIT_LOCATION_UPDATE_MODE must be one of: never, safe, always")
+
         return cls(
             jellyfin_url=jellyfin_url,
             jellyfin_api_key=jellyfin_api_key,
@@ -86,6 +94,10 @@ class Settings:
             dry_run=env_bool("DRY_RUN", False),
             pause_qbit_when_jellyfin_active=env_bool("PAUSE_QBIT_WHEN_JELLYFIN_ACTIVE", True),
             pause_qbit_during_move=env_bool("PAUSE_QBIT_DURING_MOVE", True),
+            qbit_api_timeout=int(os.getenv("QBIT_API_TIMEOUT", "8")),
+            qbit_health_timeout=int(os.getenv("QBIT_HEALTH_TIMEOUT", "3")),
+            qbit_location_update_mode=qbit_location_update_mode,
+            qbit_health_required=env_bool("QBIT_HEALTH_REQUIRED", True),
         )
 
 
@@ -172,7 +184,7 @@ class QBittorrentClient:
             self._url("/api/v2/auth/login"),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data=payload,
-            timeout=10,
+            timeout=self.settings.qbit_api_timeout,
         )
         if status != 200 or body.strip() != b"Ok.":
             raise RuntimeError(f"qBittorrent login failed: HTTP {status} {body[:200]!r}")
@@ -180,7 +192,9 @@ class QBittorrentClient:
 
     def api_get(self, path: str) -> Any:
         self.login()
-        status, body, _ = self.http.request("GET", self._url(path), timeout=20)
+        status, body, _ = self.http.request(
+            "GET", self._url(path), timeout=self.settings.qbit_api_timeout
+        )
         if status != 200:
             raise RuntimeError(f"qBittorrent GET {path} returned HTTP {status}: {body[:200]!r}")
         return json.loads(body.decode("utf-8"))
@@ -193,13 +207,29 @@ class QBittorrentClient:
             self._url(path),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data=data,
-            timeout=20,
+            timeout=self.settings.qbit_api_timeout,
         )
         if status not in {200, 204}:
             raise RuntimeError(f"qBittorrent POST {path} returned HTTP {status}: {body[:200]!r}")
 
     def torrents(self) -> list[dict[str, Any]]:
         return self.api_get("/api/v2/torrents/info")
+
+    def healthy(self) -> bool:
+        try:
+            self.login()
+            status, body, _ = self.http.request(
+                "GET",
+                self._url("/api/v2/app/version"),
+                timeout=self.settings.qbit_health_timeout,
+            )
+            if status == 200 and body.strip():
+                return True
+            LOG.warning("qBittorrent health check failed: HTTP %s %r", status, body[:80])
+            return False
+        except Exception as exc:
+            LOG.warning("qBittorrent health check failed: %s", exc)
+            return False
 
     def pause_all(self) -> None:
         LOG.info("Pausing all qBittorrent torrents")
@@ -228,6 +258,7 @@ class Mover:
         self.qbit = QBittorrentClient(settings, self.http)
         self.stop_requested = False
         self.qbit_paused_by_us = False
+        self.pending_location_updates: list[dict[str, str]] = []
 
     def run(self) -> None:
         signal.signal(signal.SIGTERM, self._stop)
@@ -235,6 +266,13 @@ class Mover:
         LOG.info("Starting qBittorrent/Jellyfin mover dry_run=%s", self.settings.dry_run)
         while not self.stop_requested:
             self._jellyfin_guard()
+            if self.settings.qbit_health_required and not self.qbit.healthy():
+                LOG.warning(
+                    "qBittorrent API is not healthy; not starting any file move this cycle"
+                )
+                self._sleep(self.settings.scan_interval)
+                continue
+            self._flush_pending_location_updates()
             candidate = self._next_candidate()
             if candidate is None:
                 self._resume_if_paused()
@@ -336,12 +374,108 @@ class Mover:
                 continue
             ok = self._rsync_interruptible(source, destination)
             if ok:
-                self.qbit.set_location(torrent_hash, str(destination_base))
                 self._remove_empty_parents(source)
+                if not self._update_qbit_location(
+                    torrent_hash, name, source, destination, destination_base
+                ):
+                    self._queue_location_update(
+                        torrent_hash, name, destination, destination_base
+                    )
                 LOG.info("Move completed for %s", name)
                 return
             LOG.info("Move interrupted; waiting for Jellyfin idle grace before resuming")
             self._jellyfin_guard()
+
+    def _update_qbit_location(
+        self,
+        torrent_hash: str,
+        name: str,
+        source: Path,
+        destination: Path,
+        destination_base: Path,
+    ) -> bool:
+        mode = self.settings.qbit_location_update_mode
+        if mode == "never":
+            LOG.info("Skipping qBittorrent location update for %s: mode=never", name)
+            return True
+
+        if mode == "safe":
+            if source.exists():
+                LOG.warning(
+                    "Skipping qBittorrent location update for %s: source still exists after rsync",
+                    name,
+                )
+                return False
+            if not destination.exists():
+                LOG.warning(
+                    "Skipping qBittorrent location update for %s: destination is missing: %s",
+                    name,
+                    destination,
+                )
+                return False
+            if not self.qbit.healthy():
+                LOG.warning(
+                    "Skipping qBittorrent location update for %s: API is not healthy", name
+                )
+                return False
+
+        try:
+            self.qbit.set_location(torrent_hash, str(destination_base))
+        except Exception as exc:
+            LOG.warning("qBittorrent location update failed for %s: %s", name, exc)
+            return False
+
+        if mode == "safe" and not self.qbit.healthy():
+            LOG.warning(
+                "qBittorrent API became unhealthy after location update for %s; "
+                "future moves will wait for recovery",
+                name,
+            )
+            return False
+        return True
+
+    def _queue_location_update(
+        self, torrent_hash: str, name: str, destination: Path, destination_base: Path
+    ) -> None:
+        if self.settings.qbit_location_update_mode == "never":
+            return
+        if any(item["hash"] == torrent_hash for item in self.pending_location_updates):
+            return
+        self.pending_location_updates.append(
+            {
+                "hash": torrent_hash,
+                "name": name,
+                "destination": str(destination),
+                "destination_base": str(destination_base),
+            }
+        )
+        LOG.warning("Queued qBittorrent location update retry for %s", name)
+
+    def _flush_pending_location_updates(self) -> None:
+        if not self.pending_location_updates:
+            return
+        if self.settings.qbit_location_update_mode == "never":
+            self.pending_location_updates.clear()
+            return
+        if not self.qbit.healthy():
+            LOG.info(
+                "qBittorrent API is not healthy; keeping %s location updates pending",
+                len(self.pending_location_updates),
+            )
+            return
+        remaining = []
+        for index, item in enumerate(self.pending_location_updates):
+            ok = self._update_qbit_location(
+                item["hash"],
+                item["name"],
+                Path(item["destination"]).parent / ".qbit-mover-source-already-moved",
+                Path(item["destination"]),
+                Path(item["destination_base"]),
+            )
+            if not ok:
+                remaining = self.pending_location_updates[index:]
+                break
+        self.pending_location_updates = remaining
 
     def _rsync_interruptible(self, source: Path, destination: Path) -> bool:
         source_arg = str(source)
