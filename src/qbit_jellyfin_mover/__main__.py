@@ -259,6 +259,7 @@ class Mover:
         self.stop_requested = False
         self.qbit_paused_by_us = False
         self.pending_location_updates: list[dict[str, str]] = []
+        self.skipped_hashes: set[str] = set()
 
     def run(self) -> None:
         signal.signal(signal.SIGTERM, self._stop)
@@ -326,6 +327,8 @@ class Mover:
             category = torrent.get("category") or ""
             if category not in self.settings.category_map:
                 continue
+            if torrent.get("hash") in self.skipped_hashes:
+                continue
             if float(torrent.get("progress") or 0) < 1:
                 continue
             if torrent.get("state") in {"moving", "checkingDL", "checkingUP", "checkingResumeData"}:
@@ -364,6 +367,8 @@ class Mover:
         destination_base.mkdir(parents=True, exist_ok=True)
         if destination.exists():
             LOG.warning("Destination already exists; skipping to avoid overwrite: %s", destination)
+            self.skipped_hashes.add(torrent_hash)
+            self._sleep(self.settings.scan_interval)
             return
 
         while not self.stop_requested:
