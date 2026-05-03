@@ -22,7 +22,7 @@ services:
       QBIT_LOCATION_UPDATE_MODE: "safe"
       CATEGORY_MIN_AGE_SECONDS: >-
         {
-          "autobrr": 172800
+          "autobrr": 86400
         }
       PAUSE_CATEGORIES: >-
         ["radarr", "sonarr", "sportarr"]
