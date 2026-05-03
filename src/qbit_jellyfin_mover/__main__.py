@@ -361,15 +361,15 @@ class Mover:
             LOG.warning("Source path no longer exists: %s", source)
             return
 
-        if self.settings.pause_qbit_during_move:
-            self._pause_if_needed()
-
         destination_base.mkdir(parents=True, exist_ok=True)
         if destination.exists():
             LOG.warning("Destination already exists; skipping to avoid overwrite: %s", destination)
             self.skipped_hashes.add(torrent_hash)
             self._sleep(self.settings.scan_interval)
             return
+
+        if self.settings.pause_qbit_during_move:
+            self._pause_if_needed()
 
         while not self.stop_requested:
             active = self.jellyfin.active_user_sessions()
