@@ -359,6 +359,8 @@ class Mover:
 
         if not source.exists():
             LOG.warning("Source path no longer exists: %s", source)
+            self.skipped_hashes.add(torrent_hash)
+            self._sleep(self.settings.scan_interval)
             return
 
         destination_base.mkdir(parents=True, exist_ok=True)
