@@ -20,6 +20,12 @@ services:
       QBIT_API_TIMEOUT: "8"
       QBIT_HEALTH_TIMEOUT: "3"
       QBIT_LOCATION_UPDATE_MODE: "safe"
+      CATEGORY_MIN_AGE_SECONDS: >-
+        {
+          "autobrr": 172800
+        }
+      PAUSE_CATEGORIES: >-
+        ["radarr", "sonarr", "sportarr"]
       CATEGORY_MAP: >-
         {
           "radarr": "/data/downloads/movies",

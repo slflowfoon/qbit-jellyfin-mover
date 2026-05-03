@@ -38,6 +38,8 @@ Do not mount `/local-downloads` into Radarr/Sonarr. They should import only afte
 - Health-checks qBittorrent before starting a move.
 - Copies/removes files outside qBittorrent with `rsync`.
 - Optionally updates qBittorrent location after a successful move, depending on `QBIT_LOCATION_UPDATE_MODE`.
+- Supports category-specific minimum ages before moving, for example keeping `autobrr` local for 48 hours.
+- Can pause only selected categories, so `autobrr` traffic can continue during Jellyfin activity.
 
 ## Jellyfin API Key
 
@@ -93,6 +95,8 @@ QBIT_HEALTH_REQUIRED=true
 QBIT_API_TIMEOUT=8
 QBIT_HEALTH_TIMEOUT=3
 QBIT_LOCATION_UPDATE_MODE=safe
+CATEGORY_MIN_AGE_SECONDS={}
+PAUSE_CATEGORIES=["radarr","sonarr","sportarr"]
 LOG_LEVEL=INFO
 ```
 
@@ -113,6 +117,20 @@ always Previous behavior: call setLocation after a successful rsync.
   "autobrr": "/data/downloads/autobrr",
   "sportarr": "/data/downloads/sportarr"
 }
+```
+
+Use `CATEGORY_MIN_AGE_SECONDS` to keep categories local before moving:
+
+```json
+{
+  "autobrr": 172800
+}
+```
+
+Use `PAUSE_CATEGORIES` to control which categories may be paused when Jellyfin is active or during a move. To keep `autobrr` downloading/uploading while Jellyfin is active:
+
+```json
+["radarr", "sonarr", "sportarr"]
 ```
 
 ## qBittorrent Notes

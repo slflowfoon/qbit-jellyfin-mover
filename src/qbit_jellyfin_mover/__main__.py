@@ -45,6 +45,8 @@ class Settings:
     qbit_health_timeout: int
     qbit_location_update_mode: str
     qbit_health_required: bool
+    category_min_age_seconds: dict[str, int]
+    pause_categories: set[str]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -67,6 +69,35 @@ class Settings:
             isinstance(k, str) and isinstance(v, str) for k, v in category_map.items()
         ):
             raise SystemExit("CATEGORY_MAP must be a JSON object of category to destination path")
+
+        category_min_age_raw = os.getenv("CATEGORY_MIN_AGE_SECONDS", "{}")
+        try:
+            category_min_age_seconds = json.loads(category_min_age_raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"CATEGORY_MIN_AGE_SECONDS is not valid JSON: {exc}") from exc
+        if not isinstance(category_min_age_seconds, dict):
+            raise SystemExit("CATEGORY_MIN_AGE_SECONDS must be a JSON object")
+        try:
+            category_min_age_seconds = {
+                str(category): int(seconds)
+                for category, seconds in category_min_age_seconds.items()
+            }
+        except (TypeError, ValueError) as exc:
+            raise SystemExit("CATEGORY_MIN_AGE_SECONDS values must be integers") from exc
+
+        pause_categories_raw = os.getenv("PAUSE_CATEGORIES")
+        if pause_categories_raw:
+            try:
+                pause_categories_value = json.loads(pause_categories_raw)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"PAUSE_CATEGORIES is not valid JSON: {exc}") from exc
+            if not isinstance(pause_categories_value, list) or not all(
+                isinstance(category, str) for category in pause_categories_value
+            ):
+                raise SystemExit("PAUSE_CATEGORIES must be a JSON list of category names")
+            pause_categories = set(pause_categories_value)
+        else:
+            pause_categories = set(category_map)
 
         jellyfin_url = os.getenv("JELLYFIN_URL", "").rstrip("/")
         jellyfin_api_key = os.getenv("JELLYFIN_API_KEY", "")
@@ -98,6 +129,8 @@ class Settings:
             qbit_health_timeout=int(os.getenv("QBIT_HEALTH_TIMEOUT", "3")),
             qbit_location_update_mode=qbit_location_update_mode,
             qbit_health_required=env_bool("QBIT_HEALTH_REQUIRED", True),
+            category_min_age_seconds=category_min_age_seconds,
+            pause_categories=pause_categories,
         )
 
 
@@ -350,10 +383,11 @@ class Mover:
         self.qbit_paused_by_us = False
 
     def _managed_torrent_hashes(self) -> list[str]:
-        managed_categories = set(self.settings.category_map)
         hashes = []
         for torrent in self.qbit.torrents():
-            if (torrent.get("category") or "") in managed_categories and torrent.get("hash"):
+            if (torrent.get("category") or "") in self.settings.pause_categories and torrent.get(
+                "hash"
+            ):
                 hashes.append(torrent["hash"])
         return hashes
 
@@ -368,6 +402,8 @@ class Mover:
                 continue
             if torrent.get("state") in {"moving", "checkingDL", "checkingUP", "checkingResumeData"}:
                 continue
+            if not self._meets_min_age(torrent):
+                continue
             root_path = torrent.get("root_path") or torrent.get("content_path") or ""
             if not root_path:
                 continue
@@ -376,6 +412,43 @@ class Mover:
                 continue
             return torrent
         return None
+
+    def _meets_min_age(self, torrent: dict[str, Any]) -> bool:
+        category = torrent.get("category") or ""
+        min_age = self.settings.category_min_age_seconds.get(category, 0)
+        if min_age <= 0:
+            return True
+        completed_at = self._completed_at(torrent)
+        name = torrent.get("name", "<unknown>")
+        if completed_at <= 0:
+            LOG.info(
+                "Skipping %s: category %s requires age %ss but completion time is unavailable",
+                name,
+                category,
+                min_age,
+            )
+            return False
+        age = int(time.time() - completed_at)
+        if age < min_age:
+            LOG.info(
+                "Skipping %s: category %s age %ss is below required %ss",
+                name,
+                category,
+                max(0, age),
+                min_age,
+            )
+            return False
+        return True
+
+    def _completed_at(self, torrent: dict[str, Any]) -> int:
+        for key in ("completion_on", "completion_date", "completed_on"):
+            try:
+                value = int(torrent.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        return 0
 
     def _move_candidate(self, torrent: dict[str, Any]) -> None:
         name = torrent.get("name", "<unknown>")
