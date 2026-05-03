@@ -479,7 +479,7 @@ class Mover:
             return
 
         if self.settings.pause_qbit_during_move:
-            self._pause_if_needed()
+            self._pause_for_move(torrent_hash)
 
         while not self.stop_requested:
             active = self.jellyfin.active_user_sessions()
@@ -500,6 +500,19 @@ class Mover:
                 return
             LOG.info("Move interrupted; waiting for Jellyfin idle grace before resuming")
             self._jellyfin_guard()
+
+    def _pause_for_move(self, torrent_hash: str) -> None:
+        if self.settings.dry_run or self.qbit_paused_by_us:
+            return
+        hashes = self._managed_torrent_hashes()
+        if torrent_hash not in hashes:
+            hashes.append(torrent_hash)
+        if not hashes:
+            LOG.info("No qBittorrent torrents to pause for move")
+            return
+        self.qbit.pause_hashes(hashes)
+        self.qbit_paused_hashes = hashes
+        self.qbit_paused_by_us = True
 
     def _update_qbit_location(
         self,
