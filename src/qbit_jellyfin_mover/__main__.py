@@ -281,7 +281,7 @@ class QBittorrentClient:
     def pause_hashes(self, hashes: list[str]) -> None:
         if not hashes:
             return
-        LOG.info("Pausing %s managed qBittorrent torrents", len(hashes))
+        LOG.info("Pausing %s qBittorrent torrents", len(hashes))
         joined = "|".join(hashes)
         try:
             self.api_post("/api/v2/torrents/stop", {"hashes": joined})
@@ -291,7 +291,7 @@ class QBittorrentClient:
     def resume_hashes(self, hashes: list[str]) -> None:
         if not hashes:
             return
-        LOG.info("Resuming %s managed qBittorrent torrents", len(hashes))
+        LOG.info("Resuming %s qBittorrent torrents", len(hashes))
         joined = "|".join(hashes)
         try:
             self.api_post("/api/v2/torrents/start", {"hashes": joined})
@@ -504,14 +504,8 @@ class Mover:
     def _pause_for_move(self, torrent_hash: str) -> None:
         if self.settings.dry_run or self.qbit_paused_by_us:
             return
-        hashes = self._managed_torrent_hashes()
-        if torrent_hash not in hashes:
-            hashes.append(torrent_hash)
-        if not hashes:
-            LOG.info("No qBittorrent torrents to pause for move")
-            return
-        self.qbit.pause_hashes(hashes)
-        self.qbit_paused_hashes = hashes
+        self.qbit.pause_hashes([torrent_hash])
+        self.qbit_paused_hashes = [torrent_hash]
         self.qbit_paused_by_us = True
 
     def _update_qbit_location(
