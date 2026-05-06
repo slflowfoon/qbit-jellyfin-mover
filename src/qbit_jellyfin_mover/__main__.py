@@ -385,11 +385,25 @@ class Mover:
     def _managed_torrent_hashes(self) -> list[str]:
         hashes = []
         for torrent in self.qbit.torrents():
-            if (torrent.get("category") or "") in self.settings.pause_categories and torrent.get(
-                "hash"
-            ):
+            if not torrent.get("hash"):
+                continue
+            category = torrent.get("category") or ""
+            if category in self.settings.pause_categories or self._is_at_destination(torrent):
                 hashes.append(torrent["hash"])
         return hashes
+
+    def _is_at_destination(self, torrent: dict[str, Any]) -> bool:
+        category = torrent.get("category") or ""
+        destination_base = self.settings.category_map.get(category)
+        if not destination_base:
+            return False
+        destination_base = destination_base.rstrip("/")
+        paths = [
+            str(torrent.get("root_path") or ""),
+            str(torrent.get("content_path") or ""),
+            str(torrent.get("save_path") or ""),
+        ]
+        return any(path == destination_base or path.startswith(destination_base + "/") for path in paths)
 
     def _next_candidate(self) -> dict[str, Any] | None:
         for torrent in self.qbit.torrents():
@@ -407,8 +421,7 @@ class Mover:
             root_path = torrent.get("root_path") or torrent.get("content_path") or ""
             if not root_path:
                 continue
-            destination_base = self.settings.category_map[category].rstrip("/")
-            if root_path == destination_base or root_path.startswith(destination_base + "/"):
+            if self._is_at_destination(torrent):
                 continue
             return torrent
         return None
