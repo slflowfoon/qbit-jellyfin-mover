@@ -96,6 +96,7 @@ QBIT_API_TIMEOUT=8
 QBIT_HEALTH_TIMEOUT=3
 QBIT_LOCATION_UPDATE_MODE=safe
 CATEGORY_MIN_AGE_SECONDS={}
+CATEGORY_PRIORITY=["radarr","sonarr","sportarr","autobrr"]
 PAUSE_CATEGORIES=["radarr","sonarr","sportarr"]
 LOG_LEVEL=INFO
 ```
@@ -125,6 +126,12 @@ Use `CATEGORY_MIN_AGE_SECONDS` to keep categories local before moving:
 {
   "autobrr": 86400
 }
+```
+
+Use `CATEGORY_PRIORITY` to move importer-managed categories before bulk categories. By default, `radarr`, `sonarr`, and `sportarr` are moved before `autobrr` so Radarr/Sonarr/Sportarr can import files as soon as possible:
+
+```json
+["radarr", "sonarr", "sportarr", "autobrr"]
 ```
 
 Use `PAUSE_CATEGORIES` to control which categories may be paused when Jellyfin is active or during a move. To keep `autobrr` downloading/uploading while Jellyfin is active:

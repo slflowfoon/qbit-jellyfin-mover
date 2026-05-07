@@ -24,6 +24,8 @@ services:
         {
           "autobrr": 86400
         }
+      CATEGORY_PRIORITY: >-
+        ["radarr", "sonarr", "sportarr", "autobrr"]
       PAUSE_CATEGORIES: >-
         ["radarr", "sonarr", "sportarr"]
       CATEGORY_MAP: >-

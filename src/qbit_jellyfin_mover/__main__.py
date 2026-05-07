@@ -47,6 +47,7 @@ class Settings:
     qbit_health_required: bool
     category_min_age_seconds: dict[str, int]
     pause_categories: set[str]
+    category_priority: list[str]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -99,6 +100,20 @@ class Settings:
         else:
             pause_categories = set(category_map)
 
+        category_priority_raw = os.getenv(
+            "CATEGORY_PRIORITY",
+            '["radarr","sonarr","sportarr","autobrr"]',
+        )
+        try:
+            category_priority_value = json.loads(category_priority_raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"CATEGORY_PRIORITY is not valid JSON: {exc}") from exc
+        if not isinstance(category_priority_value, list) or not all(
+            isinstance(category, str) for category in category_priority_value
+        ):
+            raise SystemExit("CATEGORY_PRIORITY must be a JSON list of category names")
+        category_priority = category_priority_value
+
         jellyfin_url = os.getenv("JELLYFIN_URL", "").rstrip("/")
         jellyfin_api_key = os.getenv("JELLYFIN_API_KEY", "")
         qbit_url = os.getenv("QBIT_URL", "http://127.0.0.1:8085").rstrip("/")
@@ -131,6 +146,7 @@ class Settings:
             qbit_health_required=env_bool("QBIT_HEALTH_REQUIRED", True),
             category_min_age_seconds=category_min_age_seconds,
             pause_categories=pause_categories,
+            category_priority=category_priority,
         )
 
 
@@ -406,7 +422,8 @@ class Mover:
         return any(path == destination_base or path.startswith(destination_base + "/") for path in paths)
 
     def _next_candidate(self) -> dict[str, Any] | None:
-        for torrent in self.qbit.torrents():
+        candidates: list[tuple[tuple[int, int], dict[str, Any]]] = []
+        for index, torrent in enumerate(self.qbit.torrents()):
             category = torrent.get("category") or ""
             if category not in self.settings.category_map:
                 continue
@@ -423,8 +440,27 @@ class Mover:
                 continue
             if self._is_at_destination(torrent):
                 continue
-            return torrent
-        return None
+            candidates.append(((self._category_priority(category), index), torrent))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0])
+        return candidates[0][1]
+
+    def _category_priority(self, category: str) -> int:
+        try:
+            return self.settings.category_priority.index(category)
+        except ValueError:
+            # Categories not explicitly listed should still jump ahead of autobrr.
+            # autobrr is bulk/holding traffic; arr-managed categories usually feed
+            # an importer waiting for the file to appear under /data.
+            autobrr_rank = (
+                self.settings.category_priority.index("autobrr")
+                if "autobrr" in self.settings.category_priority
+                else len(self.settings.category_priority) + 1
+            )
+            if category == "autobrr":
+                return autobrr_rank
+            return max(0, autobrr_rank - 1)
 
     def _meets_min_age(self, torrent: dict[str, Any]) -> bool:
         category = torrent.get("category") or ""
