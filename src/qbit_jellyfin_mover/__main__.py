@@ -649,16 +649,14 @@ class Mover:
         self.pending_location_updates = remaining
 
     def _rsync_interruptible(self, source: Path, destination: Path) -> bool:
-        source_arg = str(source)
-        destination_arg = str(destination)
         cmd = [
             "rsync",
             "-a",
             "--partial",
             "--append-verify",
             "--remove-source-files",
-            source_arg,
-            destination_arg,
+            self._rsync_source_arg(source),
+            str(destination),
         ]
         LOG.info("Running: %s", " ".join(cmd))
         proc = subprocess.Popen(cmd)
@@ -682,6 +680,12 @@ class Mover:
         finally:
             if proc.poll() is None:
                 proc.kill()
+
+    @staticmethod
+    def _rsync_source_arg(source: Path) -> str:
+        if source.is_dir():
+            return str(source) + os.sep
+        return str(source)
 
     def _remove_empty_parents(self, source: Path) -> None:
         if source.is_dir():
