@@ -421,7 +421,7 @@ class Mover:
             if state.startswith(("stopped", "paused")):
                 continue
             category = torrent.get("category") or ""
-            if category in self.settings.pause_categories:
+            if category in self.settings.pause_categories or self._is_at_destination(torrent):
                 hashes.append(torrent["hash"])
         return hashes
 

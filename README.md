@@ -40,7 +40,8 @@ Do not mount `/local-downloads` into Radarr/Sonarr. They should import only afte
 - Copies/removes files outside qBittorrent with `rsync`.
 - Optionally updates qBittorrent location after a successful move, depending on `QBIT_LOCATION_UPDATE_MODE`.
 - Supports category-specific minimum ages before moving, for example keeping `autobrr` local for 24 hours.
-- Pauses only selected categories, so `autobrr` traffic can continue during Jellyfin activity.
+- Pauses selected categories and torrents already on destination storage. Local `autobrr`
+  traffic can continue during Jellyfin activity without reading from the external disk.
 
 ## Jellyfin API Key
 

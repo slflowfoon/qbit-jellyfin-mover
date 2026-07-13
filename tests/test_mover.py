@@ -64,20 +64,41 @@ class JellyfinPlaybackSessionsTest(unittest.TestCase):
 
 
 class TorrentPauseLifecycleTest(unittest.TestCase):
-    def test_only_running_torrents_in_pause_categories_are_selected(self) -> None:
+    def test_running_pause_categories_and_external_torrents_are_selected(self) -> None:
         qbit = StubQbitClient(
             [
                 {"hash": "running-radarr", "category": "radarr", "state": "stalledUP"},
                 {"hash": "stopped-radarr", "category": "radarr", "state": "stoppedUP"},
                 {"hash": "paused-sonarr", "category": "sonarr", "state": "pausedDL"},
-                {"hash": "running-autobrr", "category": "autobrr", "state": "uploading"},
+                {
+                    "hash": "local-autobrr",
+                    "category": "autobrr",
+                    "state": "uploading",
+                    "save_path": "/local-downloads/completed",
+                },
+                {
+                    "hash": "external-autobrr",
+                    "category": "autobrr",
+                    "state": "stalledUP",
+                    "save_path": "/data/downloads/autobrr",
+                },
             ]
         )
         mover = Mover.__new__(Mover)
         mover.qbit = qbit
-        mover.settings = SimpleNamespace(pause_categories={"radarr", "sonarr"})
+        mover.settings = SimpleNamespace(
+            pause_categories={"radarr", "sonarr"},
+            category_map={
+                "radarr": "/data/downloads/movies",
+                "sonarr": "/data/downloads/shows",
+                "autobrr": "/data/downloads/autobrr",
+            },
+        )
 
-        self.assertEqual(mover._managed_torrent_hashes(), ["running-radarr"])
+        self.assertEqual(
+            mover._managed_torrent_hashes(),
+            ["running-radarr", "external-autobrr"],
+        )
 
     def test_graceful_shutdown_resumes_torrents_paused_by_mover(self) -> None:
         qbit = StubQbitClient()
