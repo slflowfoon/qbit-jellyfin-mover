@@ -19,12 +19,24 @@ class StubQbitClient:
     def __init__(self, torrents: list[dict] | None = None) -> None:
         self.torrent_data = torrents or []
         self.resumed_hashes: list[str] = []
+        self.locations: list[tuple[str, str]] = []
 
     def torrents(self) -> list[dict]:
         return self.torrent_data
 
     def resume_hashes(self, hashes: list[str]) -> None:
         self.resumed_hashes.extend(hashes)
+
+    def healthy(self) -> bool:
+        return True
+
+    def set_location(self, torrent_hash: str, location: str) -> None:
+        self.locations.append((torrent_hash, location))
+
+
+class StubJellyfinClient:
+    def active_playback_sessions(self) -> list[dict]:
+        return []
 
 
 class JellyfinPlaybackSessionsTest(unittest.TestCase):
@@ -117,6 +129,86 @@ class TorrentPauseLifecycleTest(unittest.TestCase):
 
         self.assertEqual(qbit.resumed_hashes, ["paused-by-mover"])
         self.assertFalse(mover.qbit_paused_by_us)
+
+
+class PartialMoveRecoveryTest(unittest.TestCase):
+    def make_mover(self, destination_base: Path, mode: str = "never") -> Mover:
+        mover = Mover.__new__(Mover)
+        mover.settings = SimpleNamespace(
+            category_map={"autobrr": str(destination_base)},
+            dry_run=False,
+            scan_interval=0,
+            pause_qbit_during_move=False,
+            qbit_location_update_mode=mode,
+        )
+        mover.qbit = StubQbitClient()
+        mover.jellyfin = StubJellyfinClient()
+        mover.stop_requested = False
+        mover.skipped_hashes = set()
+        mover.pending_location_updates = []
+        mover._sleep = lambda seconds: None
+        return mover
+
+    def test_unmarked_existing_destination_is_not_resumed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "local" / "Release"
+            destination_base = Path(tmp) / "external"
+            destination = destination_base / source.name
+            source.mkdir(parents=True)
+            destination.mkdir(parents=True)
+            mover = self.make_mover(destination_base)
+            mover._rsync_interruptible = lambda *args: self.fail("rsync should not run")
+
+            mover._move_candidate(
+                {"hash": "abc", "name": "Release", "category": "autobrr", "root_path": str(source)}
+            )
+
+            self.assertEqual(mover.skipped_hashes, {"abc"})
+
+    def test_marked_existing_destination_resumes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "local" / "Release"
+            destination_base = Path(tmp) / "external"
+            destination = destination_base / source.name
+            source.mkdir(parents=True)
+            destination.mkdir(parents=True)
+            (source / "remaining.bin").write_bytes(b"remaining")
+            mover = self.make_mover(destination_base)
+            marker = mover._partial_marker_path(destination_base, "abc")
+            mover._write_partial_marker(marker, "abc", destination)
+
+            def finish_rsync(source_path: Path, destination_path: Path) -> bool:
+                source_file = source_path / "remaining.bin"
+                (destination_path / "remaining.bin").write_bytes(source_file.read_bytes())
+                source_file.unlink()
+                return True
+
+            mover._rsync_interruptible = finish_rsync
+
+            mover._move_candidate(
+                {"hash": "abc", "name": "Release", "category": "autobrr", "root_path": str(source)}
+            )
+
+            self.assertFalse(source.exists())
+            self.assertEqual((destination / "remaining.bin").read_bytes(), b"remaining")
+            self.assertFalse(marker.exists())
+
+    def test_completed_copy_after_restart_updates_qbit_location(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "local" / "Release"
+            destination_base = Path(tmp) / "external"
+            destination = destination_base / source.name
+            destination.mkdir(parents=True)
+            mover = self.make_mover(destination_base, mode="safe")
+            marker = mover._partial_marker_path(destination_base, "abc")
+            mover._write_partial_marker(marker, "abc", destination)
+
+            mover._move_candidate(
+                {"hash": "abc", "name": "Release", "category": "autobrr", "root_path": str(source)}
+            )
+
+            self.assertEqual(mover.qbit.locations, [("abc", str(destination_base))])
+            self.assertFalse(marker.exists())
 
 
 class RsyncSourceArgTest(unittest.TestCase):

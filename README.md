@@ -38,6 +38,7 @@ Do not mount `/local-downloads` into Radarr/Sonarr. They should import only afte
 - Leaves manually stopped torrents stopped and resumes mover-paused torrents on graceful shutdown.
 - Health-checks qBittorrent before starting a move.
 - Copies/removes files outside qBittorrent with `rsync`.
+- Resumes mover-owned partial destinations after interruption or container restart.
 - Optionally updates qBittorrent location after a successful move, depending on `QBIT_LOCATION_UPDATE_MODE`.
 - Supports category-specific minimum ages before moving, for example keeping `autobrr` local for 24 hours.
 - Pauses selected categories and torrents already on destination storage. Local `autobrr`
@@ -163,3 +164,9 @@ After the mover finishes a torrent, qBittorrent can be updated to the final dest
 ## Safety
 
 Run with `DRY_RUN=true` until logs show exactly the torrents you expect. The mover skips files that already appear to be under their final destination.
+
+Before starting a copy, the mover writes a per-torrent ownership marker under
+`.qbit-mover-partials` in the destination base. An existing destination is resumed only
+when its marker matches the torrent hash and destination path; unmarked destinations are
+still skipped to avoid overwriting unrelated data. The marker remains until qBittorrent's
+location has been updated successfully, allowing recovery after a restart at any point.

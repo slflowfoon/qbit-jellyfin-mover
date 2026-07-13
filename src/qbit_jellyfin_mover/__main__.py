@@ -523,12 +523,41 @@ class Mover:
         source = Path(torrent.get("root_path") or torrent.get("content_path"))
         destination_base = Path(self.settings.category_map[category])
         destination = destination_base / source.name
+        partial_marker = self._partial_marker_path(destination_base, torrent_hash)
         LOG.info("Candidate complete torrent: %s", name)
         LOG.info("Move plan: %s -> %s", source, destination)
 
         if self.settings.dry_run:
             LOG.info("Dry run: not moving %s", name)
             self._sleep(self.settings.scan_interval)
+            return
+
+        marker_matches = self._partial_marker_matches(
+            partial_marker, torrent_hash, destination
+        )
+        if partial_marker.exists() and not marker_matches:
+            LOG.warning(
+                "Partial move marker does not match destination; skipping: %s",
+                partial_marker,
+            )
+            self.skipped_hashes.add(torrent_hash)
+            self._sleep(self.settings.scan_interval)
+            return
+
+        if not source.exists() and destination.exists() and marker_matches:
+            LOG.info("Recovering completed move after restart for %s", name)
+            if self._update_qbit_location(
+                torrent_hash, name, source, destination, destination_base
+            ):
+                self._remove_partial_marker(partial_marker)
+            else:
+                self._queue_location_update(
+                    torrent_hash,
+                    name,
+                    destination,
+                    destination_base,
+                    partial_marker,
+                )
             return
 
         if not source.exists():
@@ -539,10 +568,18 @@ class Mover:
 
         destination_base.mkdir(parents=True, exist_ok=True)
         if destination.exists():
-            LOG.warning("Destination already exists; skipping to avoid overwrite: %s", destination)
-            self.skipped_hashes.add(torrent_hash)
-            self._sleep(self.settings.scan_interval)
-            return
+            if not marker_matches:
+                LOG.warning(
+                    "Destination already exists without a matching partial move marker; "
+                    "skipping to avoid overwrite: %s",
+                    destination,
+                )
+                self.skipped_hashes.add(torrent_hash)
+                self._sleep(self.settings.scan_interval)
+                return
+            LOG.info("Resuming partial move for %s", name)
+        elif not marker_matches:
+            self._write_partial_marker(partial_marker, torrent_hash, destination)
 
         if self.settings.pause_qbit_during_move:
             self._pause_for_move(torrent_hash)
@@ -560,8 +597,14 @@ class Mover:
                     torrent_hash, name, source, destination, destination_base
                 ):
                     self._queue_location_update(
-                        torrent_hash, name, destination, destination_base
+                        torrent_hash,
+                        name,
+                        destination,
+                        destination_base,
+                        partial_marker,
                     )
+                else:
+                    self._remove_partial_marker(partial_marker)
                 LOG.info("Move completed for %s", name)
                 return
             LOG.info("Move interrupted; waiting for Jellyfin idle grace before resuming")
@@ -623,7 +666,12 @@ class Mover:
         return True
 
     def _queue_location_update(
-        self, torrent_hash: str, name: str, destination: Path, destination_base: Path
+        self,
+        torrent_hash: str,
+        name: str,
+        destination: Path,
+        destination_base: Path,
+        partial_marker: Path,
     ) -> None:
         if self.settings.qbit_location_update_mode == "never":
             return
@@ -635,8 +683,10 @@ class Mover:
                 "name": name,
                 "destination": str(destination),
                 "destination_base": str(destination_base),
+                "partial_marker": str(partial_marker),
             }
         )
+        self.skipped_hashes.add(torrent_hash)
         LOG.warning("Queued qBittorrent location update retry for %s", name)
 
     def _flush_pending_location_updates(self) -> None:
@@ -663,7 +713,40 @@ class Mover:
             if not ok:
                 remaining = self.pending_location_updates[index:]
                 break
+            self._remove_partial_marker(Path(item["partial_marker"]))
         self.pending_location_updates = remaining
+
+    @staticmethod
+    def _partial_marker_path(destination_base: Path, torrent_hash: str) -> Path:
+        return destination_base / ".qbit-mover-partials" / f"{torrent_hash}.json"
+
+    @staticmethod
+    def _partial_marker_matches(
+        marker: Path, torrent_hash: str, destination: Path
+    ) -> bool:
+        try:
+            value = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return value == {"hash": torrent_hash, "destination": str(destination)}
+
+    @staticmethod
+    def _write_partial_marker(
+        marker: Path, torrent_hash: str, destination: Path
+    ) -> None:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps({"hash": torrent_hash, "destination": str(destination)}),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _remove_partial_marker(marker: Path) -> None:
+        marker.unlink(missing_ok=True)
+        try:
+            marker.parent.rmdir()
+        except OSError:
+            pass
 
     def _rsync_interruptible(self, source: Path, destination: Path) -> bool:
         cmd = [
