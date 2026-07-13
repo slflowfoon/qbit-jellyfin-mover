@@ -190,7 +190,7 @@ class JellyfinClient:
         self.settings = settings
         self.http = http
 
-    def active_user_sessions(self) -> list[dict[str, Any]]:
+    def active_playback_sessions(self) -> list[dict[str, Any]]:
         query = urllib.parse.urlencode(
             {"activeWithinSeconds": str(self.settings.active_within_seconds)}
         )
@@ -206,9 +206,15 @@ class JellyfinClient:
         sessions = json.loads(body.decode("utf-8"))
         active = []
         for session in sessions:
-            # Treat any authenticated user session as activity, not only playback.
-            if session.get("IsActive", True) and (session.get("UserId") or session.get("UserName")):
-                active.append(session)
+            if not session.get("IsActive", True):
+                continue
+            if not (session.get("UserId") or session.get("UserName")):
+                continue
+            if not session.get("NowPlayingItem"):
+                continue
+            if (session.get("PlayState") or {}).get("IsPaused", False):
+                continue
+            active.append(session)
         return active
 
 
@@ -362,18 +368,18 @@ class Mover:
     def _jellyfin_guard(self) -> None:
         idle_since: float | None = None
         while not self.stop_requested:
-            active = self.jellyfin.active_user_sessions()
+            active = self.jellyfin.active_playback_sessions()
             if active:
                 idle_since = None
                 names = ", ".join(str(s.get("UserName") or s.get("UserId")) for s in active)
-                LOG.info("Jellyfin has active sessions (%s); waiting", names)
+                LOG.info("Jellyfin has active playback sessions (%s); waiting", names)
                 if self.settings.pause_qbit_when_jellyfin_active:
                     self._pause_if_needed()
                 self._sleep(self.settings.active_check_interval)
                 continue
             if idle_since is None:
                 idle_since = time.monotonic()
-                LOG.info("Jellyfin has no active sessions; starting idle timer")
+                LOG.info("Jellyfin has no active playback; starting idle timer")
             remaining = self.settings.idle_seconds - int(time.monotonic() - idle_since)
             if remaining <= 0:
                 return
@@ -531,9 +537,9 @@ class Mover:
             self._pause_for_move(torrent_hash)
 
         while not self.stop_requested:
-            active = self.jellyfin.active_user_sessions()
+            active = self.jellyfin.active_playback_sessions()
             if active:
-                LOG.info("Jellyfin session appeared before move; waiting again")
+                LOG.info("Jellyfin playback appeared before move; waiting again")
                 self._jellyfin_guard()
                 continue
             ok = self._rsync_interruptible(source, destination)
@@ -662,9 +668,12 @@ class Mover:
         proc = subprocess.Popen(cmd)
         try:
             while proc.poll() is None:
-                active = self.jellyfin.active_user_sessions()
+                active = self.jellyfin.active_playback_sessions()
                 if active or self.stop_requested:
-                    LOG.info("Stopping rsync because Jellyfin became active or shutdown was requested")
+                    LOG.info(
+                        "Stopping rsync because Jellyfin playback became active "
+                        "or shutdown was requested"
+                    )
                     proc.terminate()
                     try:
                         proc.wait(timeout=10)

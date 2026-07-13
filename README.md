@@ -2,7 +2,7 @@
 
 Dockerized controller for moving completed qBittorrent downloads from local SSD/ZFS storage to an external media/download disk without interrupting Jellyfin users.
 
-It waits until Jellyfin has no authenticated sessions for a grace period, pauses qBittorrent, and moves one completed torrent outside qBittorrent with `rsync`.
+It waits until Jellyfin has no active playback sessions for a grace period, pauses qBittorrent, and moves one completed torrent outside qBittorrent with `rsync`.
 
 By default it only calls qBittorrent `setLocation` in `safe` mode: after the external copy has completed, the source has been removed, the destination exists, and qBittorrent's API is responding quickly. This avoids using qBittorrent's own large file move engine, which can make qBittorrent's WebUI/API unavailable and break Radarr/Sonarr communication.
 
@@ -29,7 +29,7 @@ Do not mount `/local-downloads` into Radarr/Sonarr. They should import only afte
 
 ## Behavior
 
-- Treats any authenticated Jellyfin session as activity, not only playback.
+- Treats unpaused Jellyfin playback as activity. Logged-in idle and paused sessions do not block moves.
 - Checks Jellyfin sessions with `activeWithinSeconds`.
 - Requires Jellyfin to be idle for `IDLE_SECONDS` after no recent sessions are returned.
 - Checks Jellyfin every `ACTIVE_CHECK_INTERVAL` seconds while moving.
