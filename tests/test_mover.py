@@ -15,6 +15,18 @@ class StubHttpClient:
         return 200, json.dumps(self.sessions).encode(), {}
 
 
+class StubQbitClient:
+    def __init__(self, torrents: list[dict] | None = None) -> None:
+        self.torrent_data = torrents or []
+        self.resumed_hashes: list[str] = []
+
+    def torrents(self) -> list[dict]:
+        return self.torrent_data
+
+    def resume_hashes(self, hashes: list[str]) -> None:
+        self.resumed_hashes.extend(hashes)
+
+
 class JellyfinPlaybackSessionsTest(unittest.TestCase):
     def active_sessions(self, sessions: list[dict]) -> list[dict]:
         settings = SimpleNamespace(
@@ -49,6 +61,41 @@ class JellyfinPlaybackSessionsTest(unittest.TestCase):
         }
 
         self.assertEqual(self.active_sessions([paused]), [])
+
+
+class TorrentPauseLifecycleTest(unittest.TestCase):
+    def test_only_running_torrents_in_pause_categories_are_selected(self) -> None:
+        qbit = StubQbitClient(
+            [
+                {"hash": "running-radarr", "category": "radarr", "state": "stalledUP"},
+                {"hash": "stopped-radarr", "category": "radarr", "state": "stoppedUP"},
+                {"hash": "paused-sonarr", "category": "sonarr", "state": "pausedDL"},
+                {"hash": "running-autobrr", "category": "autobrr", "state": "uploading"},
+            ]
+        )
+        mover = Mover.__new__(Mover)
+        mover.qbit = qbit
+        mover.settings = SimpleNamespace(pause_categories={"radarr", "sonarr"})
+
+        self.assertEqual(mover._managed_torrent_hashes(), ["running-radarr"])
+
+    def test_graceful_shutdown_resumes_torrents_paused_by_mover(self) -> None:
+        qbit = StubQbitClient()
+        mover = Mover.__new__(Mover)
+        mover.qbit = qbit
+        mover.settings = SimpleNamespace(dry_run=False)
+        mover.stop_requested = False
+        mover.qbit_paused_by_us = True
+        mover.qbit_paused_hashes = ["paused-by-mover"]
+
+        def request_stop() -> None:
+            mover.stop_requested = True
+
+        mover._jellyfin_guard = request_stop
+        mover.run()
+
+        self.assertEqual(qbit.resumed_hashes, ["paused-by-mover"])
+        self.assertFalse(mover.qbit_paused_by_us)
 
 
 class RsyncSourceArgTest(unittest.TestCase):

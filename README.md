@@ -35,11 +35,12 @@ Do not mount `/local-downloads` into Radarr/Sonarr. They should import only afte
 - Checks Jellyfin every `ACTIVE_CHECK_INTERVAL` seconds while moving.
 - Stops `rsync` if a Jellyfin user appears.
 - Pauses qBittorrent while Jellyfin is active and while moving.
+- Leaves manually stopped torrents stopped and resumes mover-paused torrents on graceful shutdown.
 - Health-checks qBittorrent before starting a move.
 - Copies/removes files outside qBittorrent with `rsync`.
 - Optionally updates qBittorrent location after a successful move, depending on `QBIT_LOCATION_UPDATE_MODE`.
 - Supports category-specific minimum ages before moving, for example keeping `autobrr` local for 24 hours.
-- Can pause only selected categories, so `autobrr` traffic can continue during Jellyfin activity.
+- Pauses only selected categories, so `autobrr` traffic can continue during Jellyfin activity.
 
 ## Jellyfin API Key
 

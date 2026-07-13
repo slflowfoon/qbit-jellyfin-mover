@@ -341,21 +341,29 @@ class Mover:
         signal.signal(signal.SIGTERM, self._stop)
         signal.signal(signal.SIGINT, self._stop)
         LOG.info("Starting qBittorrent/Jellyfin mover dry_run=%s", self.settings.dry_run)
-        while not self.stop_requested:
-            self._jellyfin_guard()
-            if self.settings.qbit_health_required and not self.qbit.healthy():
-                LOG.warning(
-                    "qBittorrent API is not healthy; not starting any file move this cycle"
-                )
-                self._sleep(self.settings.scan_interval)
-                continue
-            self._flush_pending_location_updates()
-            candidate = self._next_candidate()
-            if candidate is None:
+        try:
+            while not self.stop_requested:
+                self._jellyfin_guard()
+                if self.stop_requested:
+                    break
+                if self.settings.qbit_health_required and not self.qbit.healthy():
+                    LOG.warning(
+                        "qBittorrent API is not healthy; not starting any file move this cycle"
+                    )
+                    self._sleep(self.settings.scan_interval)
+                    continue
+                self._flush_pending_location_updates()
+                candidate = self._next_candidate()
+                if candidate is None:
+                    self._resume_if_paused()
+                    self._sleep(self.settings.scan_interval)
+                    continue
+                self._move_candidate(candidate)
+        finally:
+            try:
                 self._resume_if_paused()
-                self._sleep(self.settings.scan_interval)
-                continue
-            self._move_candidate(candidate)
+            except Exception:
+                LOG.exception("Failed to resume qBittorrent torrents during shutdown")
 
     def _stop(self, *_: Any) -> None:
         self.stop_requested = True
@@ -409,8 +417,11 @@ class Mover:
         for torrent in self.qbit.torrents():
             if not torrent.get("hash"):
                 continue
+            state = str(torrent.get("state") or "").lower()
+            if state.startswith(("stopped", "paused")):
+                continue
             category = torrent.get("category") or ""
-            if category in self.settings.pause_categories or self._is_at_destination(torrent):
+            if category in self.settings.pause_categories:
                 hashes.append(torrent["hash"])
         return hashes
 
